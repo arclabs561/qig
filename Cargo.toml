@@ -1,0 +1,21 @@
+[package]
+name = "qig"
+version = "0.1.0"
+edition = "2021"
+authors = ["Arc <attobop@gmail.com>"]
+description = "Quantum information geometry primitives: fidelity, Bures distance, relative entropy"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/arclabs561/tekne"
+documentation = "https://docs.rs/qig"
+keywords = ["quantum", "information-geometry", "fidelity", "bures", "relative-entropy"]
+categories = ["algorithms", "science", "mathematics"]
+
+[dependencies]
+thiserror = "2.0"
+faer = { version = "0.19", features = ["std"] }
+num-complex = "0.4"
+
+[dev-dependencies]
+proptest = "1.5"
+rand = "0.9"
+rand_distr = "0.5"
