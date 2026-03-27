@@ -48,6 +48,7 @@ use thiserror::Error;
 
 /// Errors for quantum geometric computations.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("matrix is not square: {0}x{1}")]
     NotSquare(usize, usize),
