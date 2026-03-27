@@ -441,3 +441,247 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::f64::consts::PI;
+
+    // --- Strategies ---
+
+    /// 2x2 pure-state density matrix from Bloch sphere angles.
+    fn bloch_pure_state() -> impl Strategy<Value = Mat<Complex64>> {
+        (0.0..PI, 0.0..2.0 * PI).prop_map(|(theta, phi)| {
+            // |psi> = cos(theta/2)|0> + e^{i*phi}*sin(theta/2)|1>
+            let c = (theta / 2.0).cos();
+            let s = (theta / 2.0).sin();
+            let a0 = Complex64::new(c, 0.0);
+            let a1 = Complex64::new(s * phi.cos(), s * phi.sin());
+            // rho = |psi><psi|
+            let mut rho = Mat::<Complex64>::zeros(2, 2);
+            rho[(0, 0)] = a0 * c64_conj(a0);
+            rho[(0, 1)] = a0 * c64_conj(a1);
+            rho[(1, 0)] = a1 * c64_conj(a0);
+            rho[(1, 1)] = a1 * c64_conj(a1);
+            rho
+        })
+    }
+
+    /// 2x2 mixed-state density matrix: rho = p * |psi><psi| + (1-p) * I/2.
+    fn bloch_mixed_state() -> impl Strategy<Value = Mat<Complex64>> {
+        (bloch_pure_state(), 0.0..=1.0_f64).prop_map(|(pure, p)| {
+            let mut rho = Mat::<Complex64>::zeros(2, 2);
+            for i in 0..2 {
+                for j in 0..2 {
+                    let eye_ij = if i == j { 0.5 } else { 0.0 };
+                    rho[(i, j)] = pure[(i, j)] * p + Complex64::new(eye_ij * (1.0 - p), 0.0);
+                }
+            }
+            rho
+        })
+    }
+
+    /// NxN density matrix via A * A^dagger / tr(A * A^dagger).
+    fn random_density_matrix_strategy(n: usize) -> impl Strategy<Value = Mat<Complex64>> {
+        // Generate n*n*2 floats (real + imag for each entry).
+        proptest::collection::vec(-5.0..5.0_f64, n * n * 2).prop_map(move |vals| {
+            let mut a = Mat::<Complex64>::zeros(n, n);
+            for i in 0..n {
+                for j in 0..n {
+                    let idx = (i * n + j) * 2;
+                    a[(i, j)] = Complex64::new(vals[idx], vals[idx + 1]);
+                }
+            }
+            let mut rho = &a * a.adjoint();
+            let mut tr = 0.0;
+            for i in 0..n {
+                tr += rho[(i, i)].re;
+            }
+            // Guard against degenerate zero matrix (astronomically unlikely but safe).
+            if tr < 1e-15 {
+                // Fall back to maximally mixed state.
+                let mut m = Mat::<Complex64>::zeros(n, n);
+                for i in 0..n {
+                    m[(i, i)] = Complex64::new(1.0 / n as f64, 0.0);
+                }
+                return m;
+            }
+            let inv_tr = 1.0 / tr;
+            for i in 0..n {
+                for j in 0..n {
+                    rho[(i, j)] *= inv_tr;
+                }
+            }
+            rho
+        })
+    }
+
+    fn density_matrix_2x2() -> impl Strategy<Value = Mat<Complex64>> {
+        prop_oneof![bloch_pure_state(), bloch_mixed_state(),]
+    }
+
+    fn density_matrix_3x3() -> impl Strategy<Value = Mat<Complex64>> {
+        random_density_matrix_strategy(3)
+    }
+
+    // --- Validation tests ---
+
+    proptest! {
+        #[test]
+        fn prop_bloch_pure_validates(rho in bloch_pure_state()) {
+            validate_density_matrix(rho.as_ref(), 1e-9)?;
+        }
+
+        #[test]
+        fn prop_bloch_mixed_validates(rho in bloch_mixed_state()) {
+            validate_density_matrix(rho.as_ref(), 1e-9)?;
+        }
+
+        #[test]
+        fn prop_random_3x3_validates(rho in density_matrix_3x3()) {
+            validate_density_matrix(rho.as_ref(), 1e-9)?;
+        }
+    }
+
+    // --- Fidelity properties ---
+
+    proptest! {
+        #[test]
+        fn prop_fidelity_self_is_one_2x2(rho in density_matrix_2x2()) {
+            let f = fidelity(rho.as_ref(), rho.as_ref()).unwrap();
+            prop_assert!((f - 1.0).abs() < 1e-6, "self-fidelity = {}", f);
+        }
+
+        #[test]
+        fn prop_fidelity_self_is_one_3x3(rho in density_matrix_3x3()) {
+            let f = fidelity(rho.as_ref(), rho.as_ref()).unwrap();
+            prop_assert!((f - 1.0).abs() < 1e-6, "self-fidelity = {}", f);
+        }
+
+        #[test]
+        fn prop_fidelity_bounds_2x2(
+            rho in density_matrix_2x2(),
+            sigma in density_matrix_2x2(),
+        ) {
+            let f = fidelity(rho.as_ref(), sigma.as_ref()).unwrap();
+            prop_assert!(f >= -1e-9, "fidelity below 0: {}", f);
+            prop_assert!(f <= 1.0 + 1e-9, "fidelity above 1: {}", f);
+        }
+
+        #[test]
+        fn prop_fidelity_bounds_3x3(
+            rho in density_matrix_3x3(),
+            sigma in density_matrix_3x3(),
+        ) {
+            let f = fidelity(rho.as_ref(), sigma.as_ref()).unwrap();
+            prop_assert!(f >= -1e-9, "fidelity below 0: {}", f);
+            prop_assert!(f <= 1.0 + 1e-9, "fidelity above 1: {}", f);
+        }
+
+        #[test]
+        fn prop_fidelity_symmetry_2x2(
+            rho in density_matrix_2x2(),
+            sigma in density_matrix_2x2(),
+        ) {
+            let f1 = fidelity(rho.as_ref(), sigma.as_ref()).unwrap();
+            let f2 = fidelity(sigma.as_ref(), rho.as_ref()).unwrap();
+            prop_assert!((f1 - f2).abs() < 1e-7, "F(rho,sigma)={} != F(sigma,rho)={}", f1, f2);
+        }
+
+        #[test]
+        fn prop_fidelity_symmetry_3x3(
+            rho in density_matrix_3x3(),
+            sigma in density_matrix_3x3(),
+        ) {
+            let f1 = fidelity(rho.as_ref(), sigma.as_ref()).unwrap();
+            let f2 = fidelity(sigma.as_ref(), rho.as_ref()).unwrap();
+            prop_assert!((f1 - f2).abs() < 1e-7, "F(rho,sigma)={} != F(sigma,rho)={}", f1, f2);
+        }
+    }
+
+    // --- Bures distance properties ---
+
+    proptest! {
+        #[test]
+        fn prop_bures_self_distance_zero_2x2(rho in density_matrix_2x2()) {
+            let d = bures_distance(rho.as_ref(), rho.as_ref()).unwrap();
+            prop_assert!(d < 1e-6, "self-distance = {}", d);
+        }
+
+        #[test]
+        fn prop_bures_self_distance_zero_3x3(rho in density_matrix_3x3()) {
+            let d = bures_distance(rho.as_ref(), rho.as_ref()).unwrap();
+            prop_assert!(d < 1e-6, "self-distance = {}", d);
+        }
+
+        #[test]
+        fn prop_bures_non_negative_2x2(
+            rho in density_matrix_2x2(),
+            sigma in density_matrix_2x2(),
+        ) {
+            let d = bures_distance(rho.as_ref(), sigma.as_ref()).unwrap();
+            prop_assert!(d >= -1e-9, "negative distance: {}", d);
+        }
+
+        #[test]
+        fn prop_bures_symmetry_2x2(
+            rho in density_matrix_2x2(),
+            sigma in density_matrix_2x2(),
+        ) {
+            let d1 = bures_distance(rho.as_ref(), sigma.as_ref()).unwrap();
+            let d2 = bures_distance(sigma.as_ref(), rho.as_ref()).unwrap();
+            prop_assert!((d1 - d2).abs() < 1e-7, "d(rho,sigma)={} != d(sigma,rho)={}", d1, d2);
+        }
+
+        #[test]
+        fn prop_bures_triangle_inequality_3x3(
+            rho in density_matrix_3x3(),
+            sigma in density_matrix_3x3(),
+            tau in density_matrix_3x3(),
+        ) {
+            let d_rt = bures_distance(rho.as_ref(), tau.as_ref()).unwrap();
+            let d_rs = bures_distance(rho.as_ref(), sigma.as_ref()).unwrap();
+            let d_st = bures_distance(sigma.as_ref(), tau.as_ref()).unwrap();
+            prop_assert!(
+                d_rt <= d_rs + d_st + 1e-7,
+                "triangle: d(rho,tau)={} > d(rho,sigma)+d(sigma,tau)={}",
+                d_rt,
+                d_rs + d_st
+            );
+        }
+
+        /// Bures distance for density matrices is bounded by sqrt(2).
+        /// D_B^2 = 2(1 - F) <= 2, so D_B <= sqrt(2).
+        #[test]
+        fn prop_bures_diameter_bound_3x3(
+            rho in density_matrix_3x3(),
+            sigma in density_matrix_3x3(),
+        ) {
+            let d = bures_distance(rho.as_ref(), sigma.as_ref()).unwrap();
+            let bound = std::f64::consts::SQRT_2 + 1e-9;
+            prop_assert!(d <= bound, "diameter exceeded: d={} > sqrt(2)={}", d, bound);
+        }
+    }
+
+    // --- Bures angle properties ---
+
+    proptest! {
+        #[test]
+        fn prop_bures_angle_self_zero(rho in density_matrix_2x2()) {
+            let a = bures_angle(rho.as_ref(), rho.as_ref()).unwrap();
+            prop_assert!(a.abs() < 1e-6, "self-angle = {}", a);
+        }
+
+        #[test]
+        fn prop_bures_angle_bounds(
+            rho in density_matrix_3x3(),
+            sigma in density_matrix_3x3(),
+        ) {
+            let a = bures_angle(rho.as_ref(), sigma.as_ref()).unwrap();
+            // arccos(F) in [0, pi/2] for F in [0, 1]
+            prop_assert!(a >= -1e-9, "negative angle: {}", a);
+            prop_assert!(a <= PI / 2.0 + 1e-9, "angle > pi/2: {}", a);
+        }
+    }
+}
