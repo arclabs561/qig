@@ -24,3 +24,4 @@ infogeom = { version = "0.2", features = ["manifold"] }
 skel = "0.1"
 flowmatch = "0.1"
 ndarray = "0.16"
+rmt = "0.1"
