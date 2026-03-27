@@ -97,8 +97,7 @@ pub fn validate_density_matrix(rho: MatRef<Complex64>, tol: f64) -> Result<()> {
     for i in 0..n {
         let z = diag.read(i);
         tr_re += z.re;
-        // actual imaginary part is `-z.im`
-        tr_im += -z.im;
+        tr_im += z.im;
     }
     if (tr_re - 1.0).abs() > tol || tr_im.abs() > tol {
         return Err(Error::InvalidTrace(tr_re));
@@ -109,7 +108,6 @@ pub fn validate_density_matrix(rho: MatRef<Complex64>, tol: f64) -> Result<()> {
         for j in i..n {
             let a = rho[(i, j)];
             let b = rho[(j, i)];
-            // faer's `c64` stores the negated imaginary part in `im`.
             let diff = a - c64_conj(b);
             if diff.re.abs() > tol || diff.im.abs() > tol {
                 return Err(Error::NotHermitian(c64_norm(diff)));
@@ -171,10 +169,8 @@ pub fn fidelity(rho: MatRef<Complex64>, sigma: MatRef<Complex64>) -> Result<f64>
 
     let mut f = 0.0;
     for &val in evals.iter().take(n) {
-        // Clamp small negatives to 0
-        if val > 0.0 {
-            f += val.sqrt();
-        }
+        let clamped = val.max(0.0);
+        f += clamped.sqrt();
     }
 
     Ok(f)
@@ -185,8 +181,8 @@ pub fn fidelity(rho: MatRef<Complex64>, sigma: MatRef<Complex64>) -> Result<f64>
 /// This matches the definition where \(D_B\) corresponds to the Fisher-Rao metric infinitesimal.
 pub fn bures_distance_squared(rho: MatRef<Complex64>, sigma: MatRef<Complex64>) -> Result<f64> {
     let f = fidelity(rho, sigma)?;
-    // F is in [0, 1].
-    Ok(2.0 * (1.0 - f))
+    // Clamp to [0, 1] for numerical safety
+    Ok(2.0 * (1.0 - f.clamp(0.0, 1.0)))
 }
 
 /// Bures distance: \(D_B(\rho, \sigma) = \sqrt{2(1 - F(\rho, \sigma))}\).
@@ -199,8 +195,8 @@ pub fn bures_distance(rho: MatRef<Complex64>, sigma: MatRef<Complex64>) -> Resul
 /// Also known as the Fubini-Study metric for pure states.
 pub fn bures_angle(rho: MatRef<Complex64>, sigma: MatRef<Complex64>) -> Result<f64> {
     let f = fidelity(rho, sigma)?;
-    // Clamp to [-1, 1] for acos safety
-    let f_clamped = f.clamp(-1.0, 1.0);
+    // Fidelity is in [0, 1]; clamp for acos safety
+    let f_clamped = f.clamp(0.0, 1.0);
     Ok(f_clamped.acos())
 }
 
@@ -320,5 +316,128 @@ mod tests {
             f_calc,
             overlap
         );
+    }
+
+    /// Generate a random density matrix of dimension `n`.
+    fn random_density_matrix(n: usize, rng: &mut rand::rngs::StdRng) -> Mat<Complex64> {
+        // A = random complex matrix, rho = A A^H / tr(A A^H)
+        let mut a = Mat::<Complex64>::zeros(n, n);
+        for i in 0..n {
+            for j in 0..n {
+                a[(i, j)] = Complex64::new(StandardNormal.sample(rng), StandardNormal.sample(rng));
+            }
+        }
+        let mut rho = &a * a.adjoint();
+        // Normalize trace to 1
+        let mut tr = 0.0;
+        for i in 0..n {
+            tr += rho[(i, i)].re;
+        }
+        for i in 0..n {
+            for j in 0..n {
+                rho[(i, j)] *= 1.0 / tr;
+            }
+        }
+        rho
+    }
+
+    #[test]
+    fn verify_c64_storage() {
+        let z = Complex64::new(1.0, 2.0);
+        assert_eq!(z.re, 1.0);
+        // faer c64 stores .im as the standard imaginary part (despite doc saying "negated").
+        // Verified: c64::new -> num_complex::Complex64 copies .im directly.
+        assert_eq!(z.im, 2.0);
+    }
+
+    #[test]
+    fn trace_validation_with_complex_diagonal() {
+        // A density matrix with complex off-diagonal but real trace should validate.
+        let mut rho = Mat::<Complex64>::zeros(2, 2);
+        rho[(0, 0)] = Complex64::new(0.6, 0.0);
+        rho[(1, 1)] = Complex64::new(0.4, 0.0);
+        rho[(0, 1)] = Complex64::new(0.1, 0.2);
+        rho[(1, 0)] = Complex64::new(0.1, -0.2); // conjugate
+        assert!(validate_density_matrix(rho.as_ref(), 1e-6).is_ok());
+    }
+
+    #[test]
+    fn fidelity_symmetry() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+        for _ in 0..5 {
+            let rho = random_density_matrix(3, &mut rng);
+            let sigma = random_density_matrix(3, &mut rng);
+            let f1 = fidelity(rho.as_ref(), sigma.as_ref()).unwrap();
+            let f2 = fidelity(sigma.as_ref(), rho.as_ref()).unwrap();
+            assert!(
+                (f1 - f2).abs() < 1e-8,
+                "fidelity not symmetric: {} vs {}",
+                f1,
+                f2
+            );
+        }
+    }
+
+    #[test]
+    fn bures_self_distance_is_zero() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(77);
+        for n in 2..=4 {
+            let rho = random_density_matrix(n, &mut rng);
+            let d = bures_distance(rho.as_ref(), rho.as_ref()).unwrap();
+            assert!(d < 1e-6, "self-distance should be ~0, got {}", d);
+        }
+    }
+
+    #[test]
+    fn bures_triangle_inequality() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(99);
+        for _ in 0..5 {
+            let rho = random_density_matrix(3, &mut rng);
+            let sigma = random_density_matrix(3, &mut rng);
+            let tau = random_density_matrix(3, &mut rng);
+
+            let d_rt = bures_distance(rho.as_ref(), tau.as_ref()).unwrap();
+            let d_rs = bures_distance(rho.as_ref(), sigma.as_ref()).unwrap();
+            let d_st = bures_distance(sigma.as_ref(), tau.as_ref()).unwrap();
+
+            assert!(
+                d_rt <= d_rs + d_st + 1e-8,
+                "triangle inequality violated: d(rho,tau)={} > d(rho,sigma)+d(sigma,tau)={}",
+                d_rt,
+                d_rs + d_st
+            );
+        }
+    }
+
+    #[test]
+    fn maximally_mixed_state() {
+        for n in 2..=4 {
+            let mut rho = Mat::<Complex64>::zeros(n, n);
+            for i in 0..n {
+                rho[(i, i)] = Complex64::new(1.0 / n as f64, 0.0);
+            }
+            assert!(validate_density_matrix(rho.as_ref(), 1e-10).is_ok());
+            let f = fidelity(rho.as_ref(), rho.as_ref()).unwrap();
+            assert!(
+                (f - 1.0).abs() < 1e-8,
+                "self-fidelity of I/d should be 1, got {}",
+                f
+            );
+        }
+    }
+
+    #[test]
+    fn fidelity_bounds() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(55);
+        for _ in 0..10 {
+            let rho = random_density_matrix(3, &mut rng);
+            let sigma = random_density_matrix(3, &mut rng);
+            let f = fidelity(rho.as_ref(), sigma.as_ref()).unwrap();
+            assert!(
+                (-1e-10..=1.0 + 1e-10).contains(&f),
+                "fidelity out of [0,1]: {}",
+                f
+            );
+        }
     }
 }
