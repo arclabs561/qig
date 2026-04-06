@@ -10,6 +10,8 @@ documentation = "https://docs.rs/qig"
 keywords = ["quantum", "information-geometry", "fidelity", "bures", "relative-entropy"]
 categories = ["algorithms", "science", "mathematics"]
 
+[workspace]
+
 [dependencies]
 thiserror = "2.0"
 faer = { version = "0.19", features = ["std"] }
