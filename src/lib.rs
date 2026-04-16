@@ -4,7 +4,7 @@
 //!
 //! ## Scope
 //!
-//! This crate is **L1 (Logic)** in the mathematical foundation. It provides geometric primitives for
+//! Low-level mathematical primitives. It provides geometric primitives for
 //! quantum states (density operators):
 //!
 //! - **State validation**: Hermitian, positive semi-definite (PSD), trace 1.
