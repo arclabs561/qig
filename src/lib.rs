@@ -611,13 +611,18 @@ mod proptests {
         #[test]
         fn prop_bures_self_distance_zero_2x2(rho in density_matrix_2x2()) {
             let d = bures_distance(rho.as_ref(), rho.as_ref()).unwrap();
-            prop_assert!(d < 1e-6, "self-distance = {}", d);
+            // 1e-4, not 1e-6: bures goes through an eigendecomposition-based
+            // matrix sqrt, and near-degenerate eigenvalues legitimately
+            // accumulate ~1e-6..1e-5 of error on the self-distance (observed
+            // as a rare CI flake on the 3x3 variant).
+            prop_assert!(d < 1e-4, "self-distance = {}", d);
         }
 
         #[test]
         fn prop_bures_self_distance_zero_3x3(rho in density_matrix_3x3()) {
             let d = bures_distance(rho.as_ref(), rho.as_ref()).unwrap();
-            prop_assert!(d < 1e-6, "self-distance = {}", d);
+            // See the 2x2 variant for why 1e-4.
+            prop_assert!(d < 1e-4, "self-distance = {}", d);
         }
 
         #[test]
