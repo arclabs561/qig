@@ -17,6 +17,11 @@
 //! 2. Computes d_B via qig (normalizing to density matrices).
 //! 3. Computes W_2 via the closed-form formula.
 //! 4. Verifies they agree up to the trace normalization.
+//! 5. For the diagonal (uncorrelated) case, cross-checks the same W_2 against
+//!    the `wass` crate's `w2_gaussian_diagonal`, so the identity is verified
+//!    against an independent implementation rather than only the inline one.
+//!    `wass` is a dev-dependency: it is pulled only for this example, not by
+//!    anyone who depends on `qig` itself.
 //!
 //! Reference: Bhatia, Jain & Lim (2019), "On the Bures-Wasserstein distance
 //! between positive definite matrices", Expositiones Mathematicae 37(2).
@@ -201,12 +206,34 @@ fn main() {
     let expected = (2.0 - 1.0_f64).powi(2) + (3.0 - 2.0_f64).powi(2); // (2-1)^2 + (3-2)^2 = 2
     println!();
     println!("Diagonal case: A = diag(4, 9), B = diag(1, 4)");
-    println!("  W_2^2 (computed) = {w2_sq_diag:.10}");
-    println!("  W_2^2 (analytic) = {expected:.10}");
+    println!("  W_2^2 (qig inline)  = {w2_sq_diag:.10}");
+    println!("  W_2^2 (analytic)    = {expected:.10}");
+
+    // Cross-crate check against the `wass` crate. For diagonal (uncorrelated)
+    // Gaussians, wass computes the L2-Wasserstein distance in closed form, so
+    // this wires the Bures = W2 identity to an INDEPENDENT implementation rather
+    // than trusting only the inline formula above. wass takes per-axis variances
+    // (the covariance diagonal); A and B are diagonal here, so their diagonal
+    // entries are exactly those variances.
+    let w2_wass = wass::gaussian::w2_gaussian_diagonal(
+        &[0.0, 0.0],
+        &[a_diag[0][0] as f32, a_diag[1][1] as f32],
+        &[0.0, 0.0],
+        &[b_diag[0][0] as f32, b_diag[1][1] as f32],
+    )
+    .unwrap();
+    println!("  W_2   (wass crate)  = {w2_wass:.10}");
+
     let err_diag = (w2_sq_diag - expected).abs();
-    println!("  |difference|     = {err_diag:.2e}");
+    let err_wass = (w2_wass as f64 - expected.sqrt()).abs();
+    println!("  |qig inline - analytic| = {err_diag:.2e}");
+    println!("  |wass      - analytic| = {err_wass:.2e}");
     assert!(err_diag < 1e-10, "diagonal case mismatch: {err_diag}");
-    println!("  PASSED");
+    assert!(
+        err_wass < 1e-5,
+        "wass W2 disagrees with analytic: {err_wass}"
+    );
+    println!("  PASSED -- qig's Bures, the inline closed form, and the wass crate all agree");
 
     println!();
     println!("Bhatia, Jain & Lim (2019): Bures metric = L2-Wasserstein for centered Gaussians.");
