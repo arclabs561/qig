@@ -19,6 +19,12 @@ jobs:
         run: cargo check --all-targets
       - name: test
         run: cargo test
+      - name: run example assertions
+        run: |
+          cargo run --example bures_manifold
+          cargo run --example bures_wasserstein
+          cargo run --example classical_quantum_divergences
+          cargo run --example flow_on_states
       - name: fmt
         run: cargo fmt --all -- --check
       - name: clippy
