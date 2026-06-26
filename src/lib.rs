@@ -384,6 +384,44 @@ mod tests {
     }
 
     #[test]
+    fn fidelity_diagonal_reduces_to_classical() {
+        // Commuting (diagonal) states: the Uhlmann root fidelity Tr√(√ρσ√ρ)
+        // reduces to the classical Σ√(pᵢqᵢ). This validates matrix_sqrt and the
+        // eigenvalue trace against an independent closed form (the existing
+        // identity/orthogonal/pure-state tests do not exercise this reduction).
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        for _ in 0..10 {
+            let n = 4;
+            let mut p = [0.0f64; 4];
+            let mut q = [0.0f64; 4];
+            for i in 0..n {
+                let a: f64 = StandardNormal.sample(&mut rng);
+                let b: f64 = StandardNormal.sample(&mut rng);
+                p[i] = a * a + 1e-3;
+                q[i] = b * b + 1e-3;
+            }
+            let sp: f64 = p.iter().sum();
+            let sq: f64 = q.iter().sum();
+            for i in 0..n {
+                p[i] /= sp;
+                q[i] /= sq;
+            }
+            let mut rho = Mat::<Complex64>::zeros(n, n);
+            let mut sigma = Mat::<Complex64>::zeros(n, n);
+            for i in 0..n {
+                rho[(i, i)] = Complex64::new(p[i], 0.0);
+                sigma[(i, i)] = Complex64::new(q[i], 0.0);
+            }
+            let f = fidelity(rho.as_ref(), sigma.as_ref()).unwrap();
+            let classical: f64 = (0..n).map(|i| (p[i] * q[i]).sqrt()).sum();
+            assert!(
+                (f - classical).abs() < 1e-8,
+                "diagonal fidelity {f} != classical Σ√(pq) {classical}"
+            );
+        }
+    }
+
+    #[test]
     fn bures_self_distance_is_zero() {
         let mut rng = rand::rngs::StdRng::seed_from_u64(77);
         for n in 2..=4 {
