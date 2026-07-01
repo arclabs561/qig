@@ -158,7 +158,7 @@ fn main() {
         let avg = sum_bures / n as f64;
         println!("  d={dim:3}: mean Bures distance to I/d = {avg:.4}");
     }
-    println!("  (Distance decreases with d: measure concentrates around I/d)");
+    println!("  (For this square-Wishart ensemble, the distance is stable across d)");
 }
 
 /// Generate a random d x d density matrix from a square Gaussian.
