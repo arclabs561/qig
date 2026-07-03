@@ -29,3 +29,5 @@ jobs:
         run: cargo fmt --all -- --check
       - name: clippy
         run: cargo clippy --all-targets -- -D warnings
+      - name: doc
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps

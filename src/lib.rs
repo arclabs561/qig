@@ -37,8 +37,8 @@
 //!   to density matrices using the Bures metric.
 //!
 //! # Related crates
-//! - [`wass`]: Wasserstein optimal transport. The Bures distance equals the L2-Wasserstein distance for centered Gaussians (Bhatia et al. 2019).
-//! - [`infogeom`]: Classical Fisher-Rao distance on the probability simplex. qig generalizes this to quantum states.
+//! - `wass`: Wasserstein optimal transport. The Bures distance equals the L2-Wasserstein distance for centered Gaussians (Bhatia et al. 2019).
+//! - `infogeom`: Classical Fisher-Rao distance on the probability simplex. qig generalizes this to quantum states.
 //!
 
 #![forbid(unsafe_code)]
