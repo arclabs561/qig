@@ -13,6 +13,18 @@ captured from release runs.
 | Run flow matching between quantum states | `flow_on_states` |
 | Inspect random density matrix statistics | `random_density_matrices` |
 
+## Example dependencies
+
+Some examples compare `qig` calculations against sibling crates:
+
+| Dependency | Example | Check |
+|---|---|---|
+| `logp`, `infogeom` | `classical_quantum_divergences` | Diagonal density matrices recover Hellinger and Fisher-Rao identities |
+| `wass` | `bures_wasserstein` | Bures-Wasserstein distance matches the Gaussian optimal-transport formula |
+| `skel` | `bures_manifold` | Pure qubit states can be parameterized as a `skel::Manifold` proof sketch |
+| `flowmatch` | `flow_on_states` | Flow integration moves between states; `qig` measures fidelity |
+| `rmt` | `random_density_matrices` | Random density matrix spectra can be compared with Marchenko-Pastur diagnostics |
+
 ## Divergence Identities
 
 ### `classical_quantum_divergences`: how do diagonal quantum states recover classical geometry?
