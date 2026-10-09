@@ -41,6 +41,7 @@
 //! - `infogeom`: Classical Fisher-Rao distance on the probability simplex. qig generalizes this to quantum states.
 //!
 
+#![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
 use faer::{complex_native::c64 as Complex64, Mat, MatRef};
@@ -149,36 +150,16 @@ pub fn fidelity(rho: MatRef<Complex64>, sigma: MatRef<Complex64>) -> Result<f64>
         return Err(Error::DimensionMismatch(n, sigma.nrows()));
     }
 
-    // Algorithm:
-    // 1. sqrt_rho = sqrt(rho)
-    // 2. prod = sqrt_rho * sigma * sqrt_rho
-    // 3. F = Tr(sqrt(prod))
-
-    // To compute sqrt(A) for Hermitian PSD A: U D U^H -> U sqrt(D) U^H
+    // Tr sqrt(sqrt_rho sigma sqrt_rho) equals the trace norm of
+    // sqrt_rho sqrt_sigma, i.e. the sum of its singular values. Taking
+    // eigenvalues of the triple product and then square roots instead turns
+    // rounding noise of order 1e-17 into fidelity errors of order 1e-9 (for
+    // rank-deficient states), which swamps 1 - F for nearby states.
     let sqrt_rho = matrix_sqrt(rho)?;
+    let sqrt_sigma = matrix_sqrt(sigma)?;
+    let prod = sqrt_rho.as_ref() * sqrt_sigma.as_ref();
 
-    // prod = sqrt_rho * sigma * sqrt_rho
-    let temp = sqrt_rho.as_ref() * sigma;
-    let prod = temp.as_ref() * sqrt_rho.as_ref();
-
-    // The product might have small numerical asymmetry, but theoretically is Hermitian PSD.
-    // We force symmetry for the eigendecomposition or use singular values.
-    // Tr(sqrt(A)) = sum(sqrt(eigenvalues(A))).
-
-    // Better numerically: sum(singular_values(sqrt_rho * sqrt_sigma)) if we had sqrt_sigma.
-    // But Uhlmann is specifically trace norm of sqrt(sqrt_rho sigma sqrt_rho).
-
-    // Let's stick to the definition: F = Tr(sqrt(prod)).
-    // Since prod is Hermitian PSD, its eigenvalues are non-negative.
-    let evals = prod.selfadjoint_eigenvalues(faer::Side::Lower);
-
-    let mut f = 0.0;
-    for &val in evals.iter().take(n) {
-        let clamped = val.max(0.0);
-        f += clamped.sqrt();
-    }
-
-    Ok(f)
+    Ok(prod.singular_values().iter().sum())
 }
 
 /// Bures distance squared: \(D_B^2(\rho, \sigma) = 2(1 - F(\rho, \sigma))\).
@@ -203,6 +184,67 @@ pub fn bures_angle(rho: MatRef<Complex64>, sigma: MatRef<Complex64>) -> Result<f
     // Fidelity is in [0, 1]; clamp for acos safety
     let f_clamped = f.clamp(0.0, 1.0);
     Ok(f_clamped.acos())
+}
+
+/// Quantum (Umegaki) relative entropy \(S(\rho\|\sigma) = \operatorname{Tr}\rho(\ln\rho - \ln\sigma)\), in nats.
+///
+/// With spectral decompositions \(\rho = \sum_i p_i |a_i\rangle\langle a_i|\) and
+/// \(\sigma = \sum_j q_j |b_j\rangle\langle b_j|\), this evaluates
+/// \(\sum_i p_i \ln p_i - \sum_{i,j} p_i |\langle a_i|b_j\rangle|^2 \ln q_j\), with
+/// \(0 \ln 0 = 0\). Returns `f64::INFINITY` when the support of `rho` is not
+/// contained in the support of `sigma`. Eigenvalues at or below
+/// `n * f64::EPSILON` times the largest eigenvalue are treated as zero, and
+/// weight of `rho` below that same cutoff on the kernel of `sigma` is
+/// treated as rounding noise.
+///
+/// For commuting (diagonal) states this is the classical KL divergence.
+///
+/// Requires `rho` and `sigma` to be valid density matrices.
+pub fn relative_entropy(rho: MatRef<Complex64>, sigma: MatRef<Complex64>) -> Result<f64> {
+    let n = rho.nrows();
+    if rho.ncols() != n {
+        return Err(Error::NotSquare(n, rho.ncols()));
+    }
+    if sigma.nrows() != n || sigma.ncols() != n {
+        return Err(Error::DimensionMismatch(n, sigma.nrows()));
+    }
+
+    let rho_evd = rho.selfadjoint_eigendecomposition(faer::Side::Lower);
+    let sigma_evd = sigma.selfadjoint_eigendecomposition(faer::Side::Lower);
+    let p: Vec<f64> = (0..n)
+        .map(|i| rho_evd.s().column_vector().read(i).re)
+        .collect();
+    let q: Vec<f64> = (0..n)
+        .map(|j| sigma_evd.s().column_vector().read(j).re)
+        .collect();
+    let cutoff = |vals: &[f64]| n as f64 * f64::EPSILON * vals.iter().copied().fold(0.0, f64::max);
+    let p_cut = cutoff(&p);
+    let q_cut = cutoff(&q);
+
+    // overlap[(i, j)] = <a_i|b_j>
+    let overlap = rho_evd.u().adjoint() * sigma_evd.u();
+
+    let mut s = 0.0;
+    for (i, &pi) in p.iter().enumerate() {
+        if pi <= p_cut {
+            continue;
+        }
+        s += pi * pi.ln();
+        for (j, &qj) in q.iter().enumerate() {
+            let w = pi * c64_norm(overlap[(i, j)]).powi(2);
+            if qj <= q_cut {
+                // Mass of rho outside supp(sigma), beyond rounding noise.
+                if w > p_cut {
+                    return Ok(f64::INFINITY);
+                }
+                continue;
+            }
+            s -= w * qj.ln();
+        }
+    }
+
+    // Klein's inequality: S >= 0; clamp rounding below zero.
+    Ok(s.max(0.0))
 }
 
 /// Compute the principal square root of a Hermitian PSD matrix.
@@ -418,6 +460,138 @@ mod tests {
                 (f - classical).abs() < 1e-8,
                 "diagonal fidelity {f} != classical Σ√(pq) {classical}"
             );
+        }
+    }
+
+    /// Random unit vector in C^n.
+    fn random_unit_vector(n: usize, rng: &mut rand::rngs::StdRng) -> Vec<Complex64> {
+        let v: Vec<Complex64> = (0..n)
+            .map(|_| Complex64::new(StandardNormal.sample(rng), StandardNormal.sample(rng)))
+            .collect();
+        let norm = v
+            .iter()
+            .map(|z| z.re * z.re + z.im * z.im)
+            .sum::<f64>()
+            .sqrt();
+        v.iter().map(|z| *z * (1.0 / norm)).collect()
+    }
+
+    fn projector(v: &[Complex64]) -> Mat<Complex64> {
+        Mat::from_fn(v.len(), v.len(), |i, j| v[i] * c64_conj(v[j]))
+    }
+
+    #[test]
+    fn bures_distance_resolves_close_pure_states() {
+        // For pure states D_B^2 = 2(1 - |<psi|phi>|) = min_a |psi - e^{ia} phi|^2,
+        // and the right-hand side has no cancellation, so it is an exact
+        // reference even when the states are very close.
+        let mut rng = rand::rngs::StdRng::seed_from_u64(2024);
+        for n in [2, 3] {
+            for eps in [1e-2, 1e-3, 1e-4] {
+                let psi = random_unit_vector(n, &mut rng);
+                let eta = random_unit_vector(n, &mut rng);
+                let raw: Vec<Complex64> =
+                    psi.iter().zip(&eta).map(|(&p, &e)| p + e * eps).collect();
+                let norm = raw
+                    .iter()
+                    .map(|z| z.re * z.re + z.im * z.im)
+                    .sum::<f64>()
+                    .sqrt();
+                let phi: Vec<Complex64> = raw.iter().map(|z| *z * (1.0 / norm)).collect();
+
+                // <phi|psi> and the phase that aligns phi with psi.
+                let mut overlap = Complex64::new(0.0, 0.0);
+                for (&p, &f) in psi.iter().zip(&phi) {
+                    overlap += c64_conj(f) * p;
+                }
+                let phase = overlap * (1.0 / c64_norm(overlap));
+                let expected = psi
+                    .iter()
+                    .zip(&phi)
+                    .map(|(&p, &f)| {
+                        let d = p - phase * f;
+                        d.re * d.re + d.im * d.im
+                    })
+                    .sum::<f64>()
+                    .sqrt();
+
+                let d = bures_distance(projector(&psi).as_ref(), projector(&phi).as_ref()).unwrap();
+                assert!(
+                    (d - expected).abs() <= 1e-3 * expected,
+                    "n={n} eps={eps}: bures {d:e} vs exact {expected:e}"
+                );
+            }
+        }
+    }
+
+    fn diagonal_state(p: &[f64]) -> Mat<Complex64> {
+        Mat::from_fn(p.len(), p.len(), |i, j| {
+            Complex64::new(if i == j { p[i] } else { 0.0 }, 0.0)
+        })
+    }
+
+    #[test]
+    fn relative_entropy_of_diagonal_states_is_kl_divergence() {
+        let p = [0.5_f64, 0.3, 0.2];
+        let q = [0.2_f64, 0.2, 0.6];
+        let kl: f64 = p.iter().zip(&q).map(|(&a, &b)| a * (a / b).ln()).sum();
+        let s = relative_entropy(diagonal_state(&p).as_ref(), diagonal_state(&q).as_ref()).unwrap();
+        assert!((s - kl).abs() < 1e-12, "S = {s}, KL = {kl}");
+    }
+
+    #[test]
+    fn relative_entropy_of_noncommuting_states_matches_closed_form() {
+        // rho = |+><+| is pure, so S(rho||sigma) = -<+| ln sigma |+>; for
+        // diagonal sigma = diag(q, 1 - q) that is -(ln q + ln(1 - q)) / 2.
+        let h = std::f64::consts::FRAC_1_SQRT_2;
+        let plus = [Complex64::new(h, 0.0), Complex64::new(h, 0.0)];
+        let q = 0.3_f64;
+        let s = relative_entropy(
+            projector(&plus).as_ref(),
+            diagonal_state(&[q, 1.0 - q]).as_ref(),
+        )
+        .unwrap();
+        let expected = -0.5 * (q.ln() + (1.0 - q).ln());
+        assert!((s - expected).abs() < 1e-12, "S = {s}, expected {expected}");
+
+        // Pure |0><0| against the maximally mixed state: S = ln 2.
+        let zero = diagonal_state(&[1.0, 0.0]);
+        let mixed = diagonal_state(&[0.5, 0.5]);
+        let s = relative_entropy(zero.as_ref(), mixed.as_ref()).unwrap();
+        assert!((s - std::f64::consts::LN_2).abs() < 1e-12, "S = {s}");
+    }
+
+    #[test]
+    fn relative_entropy_is_zero_on_equal_and_infinite_off_support() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(31);
+        let rho = random_density_matrix(3, &mut rng);
+        let s = relative_entropy(rho.as_ref(), rho.as_ref()).unwrap();
+        assert!(s.abs() < 1e-10, "S(rho||rho) = {s}");
+
+        // supp(|+><+|) is not inside supp(|0><0|).
+        let h = std::f64::consts::FRAC_1_SQRT_2;
+        let plus = projector(&[Complex64::new(h, 0.0), Complex64::new(h, 0.0)]);
+        let zero = diagonal_state(&[1.0, 0.0]);
+        assert_eq!(
+            relative_entropy(plus.as_ref(), zero.as_ref()).unwrap(),
+            f64::INFINITY
+        );
+        // The reverse direction is finite only when the support fits; here
+        // |0><0| has weight 1/2 on |-> as well, so it is infinite too.
+        assert_eq!(
+            relative_entropy(zero.as_ref(), plus.as_ref()).unwrap(),
+            f64::INFINITY
+        );
+    }
+
+    #[test]
+    fn relative_entropy_is_nonnegative_on_random_states() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(8);
+        for _ in 0..10 {
+            let rho = random_density_matrix(3, &mut rng);
+            let sigma = random_density_matrix(3, &mut rng);
+            let s = relative_entropy(rho.as_ref(), sigma.as_ref()).unwrap();
+            assert!(s.is_finite() && s > 0.0, "S = {s}");
         }
     }
 
