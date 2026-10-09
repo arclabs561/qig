@@ -9,13 +9,15 @@ repository = "https://github.com/arclabs561/qig"
 documentation = "https://docs.rs/qig"
 keywords = ["quantum", "information-geometry", "fidelity", "bures", "relative-entropy"]
 categories = ["algorithms", "science", "mathematics"]
+rust-version = "1.85"
+readme = "README.md"
+include = ["/src/**/*.rs", "/Cargo.toml", "/LICENSE", "/LICENSE-*", "/README.md"]
 
 [workspace]
 
 [dependencies]
 thiserror = "2.0"
 faer = { version = "0.19", features = ["std"] }
-num-complex = "0.4"
 
 [dev-dependencies]
 proptest = "1.5"
