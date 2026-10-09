@@ -27,6 +27,6 @@ logp = "0.2.3"
 infogeom = { version = "0.2.1", features = ["manifold"] }
 skel = "0.1.7"
 flowmatch = "0.1.8"
-ndarray = "0.16"
+ndarray = "0.17"
 rmt = "0.1.3"
 wass = "0.2.2"
