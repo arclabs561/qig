@@ -22,7 +22,7 @@ faer = { version = "0.19", features = ["std"] }
 [dev-dependencies]
 proptest = "1.5"
 rand = "0.9"
-rand_distr = "0.5"
+rand_distr = "0.6"
 logp = "0.2.3"
 infogeom = { version = "0.2.1", features = ["manifold"] }
 skel = "0.1.7"
