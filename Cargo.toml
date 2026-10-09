@@ -21,7 +21,7 @@ faer = { version = "0.19", features = ["std"] }
 
 [dev-dependencies]
 proptest = "1.5"
-rand = "0.9"
+rand = "0.10"
 rand_distr = "0.5"
 logp = "0.2.3"
 infogeom = { version = "0.2.1", features = ["manifold"] }
