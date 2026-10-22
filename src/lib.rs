@@ -159,7 +159,8 @@ pub fn fidelity(rho: MatRef<Complex64>, sigma: MatRef<Complex64>) -> Result<f64>
     let sqrt_sigma = matrix_sqrt(sigma)?;
     let prod = sqrt_rho.as_ref() * sqrt_sigma.as_ref();
 
-    Ok(prod.singular_values().iter().sum())
+    // Roundoff can push the trace norm just above one for valid pure states.
+    Ok(prod.singular_values().iter().sum::<f64>().clamp(0.0, 1.0))
 }
 
 /// Bures distance squared: \(D_B^2(\rho, \sigma) = 2(1 - F(\rho, \sigma))\).
@@ -291,6 +292,20 @@ mod tests {
 
         let f = fidelity(rho.as_ref(), rho.as_ref()).unwrap();
         assert!((f - 1.0).abs() < TOL);
+    }
+
+    #[test]
+    fn fidelity_exact_pure_projector_stays_in_unit_interval() {
+        // Exact dyadic projector onto (|0> + |1>)/sqrt(2): trace 1,
+        // eigenvalues 0 and 1. Its self root fidelity is exactly 1.
+        let rho = Mat::<Complex64>::from_fn(2, 2, |_, _| Complex64::new(0.5, 0.0));
+        validate_density_matrix(rho.as_ref(), 0.0).unwrap();
+        let f = fidelity(rho.as_ref(), rho.as_ref()).unwrap();
+        assert!(
+            (0.0..=1.0).contains(&f),
+            "self-fidelity outside [0,1]: {f:.17}"
+        );
+        assert!((f - 1.0).abs() < 1e-14);
     }
 
     #[test]
