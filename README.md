@@ -2,14 +2,13 @@
 
 Quantum information geometry primitives.
 
-[![crates.io](https://img.shields.io/crates/v/qig.svg)](https://crates.io/crates/qig)
-[![docs.rs](https://docs.rs/qig/badge.svg)](https://docs.rs/qig)
-
 ## Install
+
+Use the Git source while the crate is unpublished:
 
 ```toml
 [dependencies]
-qig = "0.1"
+qig = { git = "https://github.com/arclabs561/qig", rev = "5ee707b9694389cc8bbdc61286ed6a7d547d6d17" }
 faer = "0.19" # qig's public API takes faer matrix types
 ```
 
@@ -31,6 +30,10 @@ sigma[(1, 1)] = c64::new(1.0, 0.0);
 let f = fidelity(rho.as_ref(), sigma.as_ref()).unwrap();
 assert!(f.abs() < 1e-9);
 ```
+
+`fidelity` returns root fidelity (the unsquared convention). For pure states,
+this is the absolute inner product, not its square. Inputs must be valid density
+matrices: Hermitian, positive semidefinite, and trace one.
 
 ## Examples
 
