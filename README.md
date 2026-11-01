@@ -37,8 +37,29 @@ matrices: Hermitian, positive semidefinite, and trace one.
 
 ## Examples
 
-See [examples/README.md](examples/README.md) for mathematical demonstrations
-with captured output.
+`classical_quantum_divergences` embeds two categorical distributions as
+diagonal density matrices and checks that Bures geometry recovers the
+classical Hellinger and Fisher-Rao distances:
+
+```bash
+cargo run --release --example classical_quantum_divergences
+```
+
+```text
+Verification:
+  Bures^2          = 0.1713892745
+  2 * Hellinger^2  = 0.1713892745
+  |difference|     = 0.00e0
+  PASSED: Bures^2 == 2 * Hellinger^2 for diagonal density matrices.
+
+  Bures angle      = 0.4170067853
+  Fisher-Rao / 2   = 0.4170067853
+  |difference|     = 0.00e0
+  PASSED: Bures angle == Fisher-Rao / 2 for diagonal density matrices.
+```
+
+See [examples/README.md](examples/README.md) for the other examples and their
+captured output.
 
 ## License
 
